@@ -341,6 +341,19 @@ async def add_torrent(req: TorrentRequest):
             
             if torrents and len(torrents) > 0:
                 t = torrents[0]
+
+                await qb_request(
+                    "POST",
+                    "/torrents/toggleSequentialDownload",
+                    {"hashes": t.get("hash")}
+                )
+
+                await qb_request(
+                    "POST",
+                    "/torrents/toggleFirstLastPiecePrio",
+                    {"hashes": t.get("hash")}
+                )
+
                 return {
                     "hash": t.get("hash"),
                     "name": t.get("name"),
