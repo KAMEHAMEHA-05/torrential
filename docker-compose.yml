@@ -1,0 +1,22 @@
+services:
+  torrent-backend:
+    build: .
+    container_name: torrent-backend
+    ports:
+      - "8000:8000"
+      - "8080:8080"
+      - "6881-6889:6881-6889/udp"
+    environment:
+      QB_HOST: localhost
+      QB_PORT: 8080
+      QB_USERNAME: admin
+      QB_PASSWORD: adminadmin
+      DOWNLOAD_DIR: /downloads
+    volumes:
+      - torrent_downloads:/downloads
+      - qbittorrent_config:/root/.config/qBittorrent
+    restart: unless-stopped
+
+volumes:
+  torrent_downloads:
+  qbittorrent_config:

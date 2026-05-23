@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>qBittorrent Web UI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: #fff;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .health-status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .health-status.ok {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .health-status.error {
+            background: #f44336;
+            color: white;
+        }
+
+        /* Add Torrent Form */
+        .add-torrent-form {
+            background: #fff;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .form-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #1976D2;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        /* Torrents Grid */
+        .torrents-grid {
+            display: grid;
+            gap: 20px;
+        }
+
+        .torrent-card {
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: box-shadow 0.2s;
+        }
+
+        .torrent-card:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+
+        .torrent-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+
+        .torrent-title {
+            font-size: 18px;
+            font-weight: bold;
+            word-break: break-word;
+            flex: 1;
+        }
+
+        .state-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            white-space: nowrap;
+            margin-left: 10px;
+        }
+
+        .state-badge.metaDL {
+            background: #FFA500;
+            color: white;
+        }
+
+        .state-badge.allocating {
+            background: #FFD700;
+            color: #333;
+        }
+
+        .state-badge.downloading {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .state-badge.seeding {
+            background: #2196F3;
+            color: white;
+        }
+
+        .state-badge.paused {
+            background: #999;
+            color: white;
+        }
+
+        /* Progress Bar */
+        .progress-section {
+            margin-bottom: 15px;
+        }
+
+        .progress-bar-container {
+            height: 24px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50 0%, #45a049 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            min-width: 30px;
+        }
+
+        .progress-text {
+            font-size: 13px;
+            color: #666;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .stat {
+            background: #f9f9f9;
+            padding: 12px;
+            border-radius: 4px;
+            border-left: 4px solid #2196F3;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #999;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        /* Controls */
+        .torrent-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .torrent-controls button {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+
+        .torrent-controls button.danger {
+            background: #f44336;
+        }
+
+        .torrent-controls button.danger:hover {
+            background: #da190b;
+        }
+
+        /* Loading State */
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #999;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #2196F3;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #ffebee;
+            border: 1px solid #f44336;
+            color: #c62828;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🧲 qBittorrent Web UI</h1>
+            <span id="healthStatus" class="health-status error">
+                <span class="spinner"></span>Checking connection...
+            </span>
+        </header>
+
+        <div class="add-torrent-form">
+            <h3 style="margin-bottom: 15px;">Add Torrent</h3>
+            <div class="form-group">
+                <input 
+                    type="text" 
+                    id="magnetInput" 
+                    placeholder="Paste magnet link here..."
+                    onkeypress="if(event.key==='Enter') addTorrent()"
+                >
+                <button onclick="addTorrent()">Add</button>
+            </div>
+            <div id="addError" class="error-message" style="display: none;"></div>
+        </div>
+
+        <div id="torrentsContainer" class="torrents-grid">
+            <div class="empty-state">
+                <div class="empty-state-icon">📭</div>
+                <p>No torrents yet. Add one to get started!</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000';
+        let pollIntervals = new Map();
+
+        // Check health on startup
+        checkHealth();
+        loadTorrents();
+
+        // Auto-refresh torrents every 5 seconds
+        setInterval(loadTorrents, 5000);
+
+        async function checkHealth() {
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                const data = await response.json();
+                
+                const healthEl = document.getElementById('healthStatus');
+                if (response.ok) {
+                    healthEl.className = 'health-status ok';
+                    healthEl.innerHTML = '✅ Connected';
+                } else {
+                    healthEl.className = 'health-status error';
+                    healthEl.innerHTML = '❌ Disconnected';
+                }
+            } catch (error) {
+                console.error('Health check failed:', error);
+                document.getElementById('healthStatus').className = 'health-status error';
+                document.getElementById('healthStatus').innerHTML = '❌ Connection Error';
+            }
+        }
+
+        async function addTorrent() {
+            const input = document.getElementById('magnetInput');
+            const magnet = input.value.trim();
+            const errorEl = document.getElementById('addError');
+
+            if (!magnet) {
+                errorEl.textContent = 'Please paste a magnet link';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            if (!magnet.startsWith('magnet:?')) {
+                errorEl.textContent = 'Invalid magnet link. Must start with "magnet:?"';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/torrent/add`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ magnet })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    input.value = '';
+                    errorEl.style.display = 'none';
+                    
+                    // Refresh torrents immediately
+                    await loadTorrents();
+                    
+                    // Start polling this torrent
+                    startPolling(data.hash);
+                } else {
+                    const error = await response.json();
+                    errorEl.textContent = error.detail || 'Failed to add torrent';
+                    errorEl.style.display = 'block';
+                }
+            } catch (error) {
+                errorEl.textContent = 'Error: ' + error.message;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        async function loadTorrents() {
+            try {
+                const response = await fetch(`${API_URL}/torrents`);
+                const torrents = await response.json();
+                const container = document.getElementById('torrentsContainer');
+
+                if (!torrents || torrents.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📭</div>
+                            <p>No torrents yet. Add one to get started!</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = '';
+                for (const torrent of torrents) {
+                    const statusResponse = await fetch(`${API_URL}/torrent/${torrent.hash}/status`);
+                    const status = await statusResponse.json();
+                    
+                    const card = createTorrentCard(status);
+                    container.appendChild(card);
+                    
+                    // Start polling this torrent
+                    startPolling(torrent.hash);
+                }
+            } catch (error) {
+                console.error('Error loading torrents:', error);
+            }
+        }
+
+        function createTorrentCard(status) {
+            const card = document.createElement('div');
+            card.className = 'torrent-card';
+            card.id = `torrent-${status.name.replace(/[^a-zA-Z0-9]/g, '')}`;
+
+            const progressPercent = (status.progress * 100).toFixed(1);
+            const downloadedMB = (status.downloaded / 1024 / 1024).toFixed(1);
+            const totalMB = status.total_size > 0 ? (status.total_size / 1024 / 1024).toFixed(1) : 'Unknown';
+            const speedMBps = (status.download_speed / 1024 / 1024).toFixed(2);
+            const uploadMBps = (status.upload_speed / 1024 / 1024).toFixed(2);
+
+            let etaText = 'N/A';
+            if (status.eta > 0 && status.eta < 8640000) {
+                const hours = Math.floor(status.eta / 3600);
+                const minutes = Math.floor((status.eta % 3600) / 60);
+                etaText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+            }
+
+            const stateBadgeClass = `state-badge ${status.state}`;
+            const stateText = status.state.toUpperCase();
+
+            card.innerHTML = `
+                <div class="torrent-header">
+                    <div class="torrent-title">${escapeHtml(status.name)}</div>
+                    <span class="${stateBadgeClass}">${stateText}</span>
+                </div>
+
+                <div class="progress-section">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" style="width: ${progressPercent}%">
+                            ${progressPercent > 5 ? progressPercent + '%' : ''}
+                        </div>
+                    </div>
+                    <div class="progress-text">
+                        ${downloadedMB} MB / ${totalMB} MB
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat">
+                        <div class="stat-label">Download</div>
+                        <div class="stat-value">${speedMBps} MB/s</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-label">Upload</div>
+                        <div class="stat-value">${uploadMBps} MB/s</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-label">Peers</div>
+                        <div class="stat-value">${status.peers}</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-label">Seeds</div>
+                        <div class="stat-value">${status.seeds}</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-label">ETA</div>
+                        <div class="stat-value">${etaText}</div>
+                    </div>
+                </div>
+
+                <div class="torrent-controls">
+                    ${status.state === 'paused' ? 
+                        `<button onclick="resumeTorrent('${status.name}')">▶️ Resume</button>` :
+                        `<button onclick="pauseTorrent('${status.name}')">⏸️ Pause</button>`
+                    }
+                    <button class="danger" onclick="removeTorrent('${status.name}')">🗑️ Remove</button>
+                </div>
+            `;
+
+            return card;
+        }
+
+        function startPolling(hash) {
+            // Don't start multiple intervals for same hash
+            if (pollIntervals.has(hash)) return;
+
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_URL}/torrent/${hash}/status`);
+                    if (response.ok) {
+                        const status = await response.json();
+                        updateTorrentCard(status);
+
+                        // Stop polling when done
+                        if (['seeding', 'paused', 'error'].includes(status.state)) {
+                            clearInterval(interval);
+                            pollIntervals.delete(hash);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, 2000);
+
+            pollIntervals.set(hash, interval);
+        }
+
+        function updateTorrentCard(status) {
+            const cardId = `torrent-${status.name.replace(/[^a-zA-Z0-9]/g, '')}`;
+            const card = document.getElementById(cardId);
+            if (!card) return;
+
+            // Update progress
+            const progressPercent = (status.progress * 100).toFixed(1);
+            const progressFill = card.querySelector('.progress-bar-fill');
+            progressFill.style.width = progressPercent + '%';
+            progressFill.textContent = progressPercent > 5 ? progressPercent + '%' : '';
+
+            // Update progress text
+            const downloadedMB = (status.downloaded / 1024 / 1024).toFixed(1);
+            const totalMB = status.total_size > 0 ? (status.total_size / 1024 / 1024).toFixed(1) : 'Unknown';
+            card.querySelector('.progress-text').textContent = `${downloadedMB} MB / ${totalMB} MB`;
+
+            // Update stats
+            const stats = card.querySelectorAll('.stat-value');
+            stats[0].textContent = (status.download_speed / 1024 / 1024).toFixed(2) + ' MB/s';
+            stats[1].textContent = (status.upload_speed / 1024 / 1024).toFixed(2) + ' MB/s';
+            stats[2].textContent = status.peers;
+            stats[3].textContent = status.seeds;
+
+            // Update ETA
+            let etaText = 'N/A';
+            if (status.eta > 0 && status.eta < 8640000) {
+                const hours = Math.floor(status.eta / 3600);
+                const minutes = Math.floor((status.eta % 3600) / 60);
+                etaText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+            }
+            stats[4].textContent = etaText;
+
+            // Update state badge
+            const badge = card.querySelector('.state-badge');
+            badge.className = `state-badge ${status.state}`;
+            badge.textContent = status.state.toUpperCase();
+
+            // Update pause/resume button
+            const controls = card.querySelector('.torrent-controls');
+            if (status.state === 'paused') {
+                if (!controls.innerHTML.includes('Resume')) {
+                    controls.innerHTML = `
+                        <button onclick="resumeTorrent('${status.name}')">▶️ Resume</button>
+                        <button class="danger" onclick="removeTorrent('${status.name}')">🗑️ Remove</button>
+                    `;
+                }
+            } else {
+                if (!controls.innerHTML.includes('Pause')) {
+                    controls.innerHTML = `
+                        <button onclick="pauseTorrent('${status.name}')">⏸️ Pause</button>
+                        <button class="danger" onclick="removeTorrent('${status.name}')">🗑️ Remove</button>
+                    `;
+                }
+            }
+        }
+
+        async function pauseTorrent(name) {
+            // Get hash first
+            const response = await fetch(`${API_URL}/torrents`);
+            const torrents = await response.json();
+            const torrent = torrents.find(t => t.name === name);
+            if (!torrent) return;
+
+            await fetch(`${API_URL}/torrent/${torrent.hash}/pause`, { method: 'POST' });
+            await loadTorrents();
+        }
+
+        async function resumeTorrent(name) {
+            const response = await fetch(`${API_URL}/torrents`);
+            const torrents = await response.json();
+            const torrent = torrents.find(t => t.name === name);
+            if (!torrent) return;
+
+            await fetch(`${API_URL}/torrent/${torrent.hash}/resume`, { method: 'POST' });
+            await loadTorrents();
+        }
+
+        async function removeTorrent(name) {
+            if (!confirm(`Remove torrent "${name}"?`)) return;
+
+            const response = await fetch(`${API_URL}/torrents`);
+            const torrents = await response.json();
+            const torrent = torrents.find(t => t.name === name);
+            if (!torrent) return;
+
+            await fetch(`${API_URL}/torrent/${torrent.hash}`, { method: 'DELETE' });
+            await loadTorrents();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Check health periodically
+        setInterval(checkHealth, 10000);
+    </script>
+</body>
+</html>
