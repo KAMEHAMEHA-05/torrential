@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Request
 from pydantic import BaseModel
 import os
 import logging
@@ -38,6 +39,8 @@ TRANSCODE_CACHE_DIR = os.getenv("TRANSCODE_CACHE_DIR", "/tmp/transcode-cache")
 TRANSCODE_TIMEOUT = 600  # 10 minutes
 TRANSCODE_PRESET = "ultrafast"  # fast transcoding
 TRANSCODE_BITRATE = "3000k"
+
+STREAM_CHUNK_SIZE = 1024 * 1024  # 1MB
 
 qb_url = f"http://{QB_HOST}:{QB_PORT}"
 qb_session = None
@@ -79,6 +82,65 @@ class TorrentStatus(BaseModel):
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
+
+async def stream_file_chunks(
+    file_path: Path,
+    start: int,
+    end: int,
+    chunk_size: int = STREAM_CHUNK_SIZE
+):
+    """
+    Async byte-range file streamer
+    """
+    
+    with open(file_path, "rb") as f:
+        f.seek(start)
+
+        remaining = end - start + 1
+
+        while remaining > 0:
+            read_size = min(chunk_size, remaining)
+
+            chunk = f.read(read_size)
+
+            if not chunk:
+                break
+
+            remaining -= len(chunk)
+
+            yield chunk
+
+            await asyncio.sleep(0)
+
+def parse_range_header(range_header: str, file_size: int):
+    """
+    Parse HTTP Range header
+    """
+
+    if not range_header:
+        return 0, file_size - 1
+
+    try:
+        units, range_spec = range_header.split("=")
+
+        if units != "bytes":
+            raise ValueError("Invalid range unit")
+
+        start_str, end_str = range_spec.split("-")
+
+        start = int(start_str) if start_str else 0
+        end = int(end_str) if end_str else file_size - 1
+
+        if start > end:
+            raise ValueError("Invalid range")
+
+        return start, min(end, file_size - 1)
+
+    except Exception:
+        raise HTTPException(
+            status_code=416,
+            detail="Invalid Range header"
+        )
 
 async def check_ffmpeg():
     """Check if ffmpeg is available"""
@@ -416,7 +478,7 @@ async def get_torrent_files(torrent_hash: str):
     ]
 
 @app.get("/torrent/{torrent_hash}/file/{file_path:path}")
-async def stream_file(torrent_hash: str, file_path: str, use_r2: bool = False):
+async def stream_file(request: Request, torrent_hash: str, file_path: str, use_r2: bool = False):
     """Stream a file from a torrent (auto-transcode if needed)"""
     torrents = await qb_request("GET", "/torrents/info", {"hashes": torrent_hash})
     
@@ -454,7 +516,6 @@ async def stream_file(torrent_hash: str, file_path: str, use_r2: bool = False):
     if not requested_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     
-    # ✅ KEY FIX: Auto-transcode if needed
     if needs_transcoding(file_path):
         logger.info(f"Auto-transcoding required: {file_path}")
         return await transcode_file(torrent_hash, file_path)
@@ -492,10 +553,26 @@ async def stream_file(torrent_hash: str, file_path: str, use_r2: bool = False):
     
     # Stream from local storage (MP4, WebM, etc.)
     try:
-        return FileResponse(
-            requested_path,
-            media_type="application/octet-stream",
-            filename=requested_path.name
+        file_size = requested_path.stat().st_size
+        range_header = request.headers.get("range")
+        start, end = parse_range_header(range_header, file_size)
+        content_length = end - start + 1
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Content-Length": str(content_length),
+            "Content-Type": "video/mp4",
+        }
+
+        return StreamingResponse(
+            stream_file_chunks(
+                requested_path,
+                start,
+                end
+            ),
+            status_code=206,
+            headers=headers,
+            media_type="video/mp4"
         )
     except Exception as e:
         logger.error(f"Failed to stream: {e}")
