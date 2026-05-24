@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+
+    <meta charset="UTF-8">
+
+    <title>HLS Test Player</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+    <style>
+
+        body {
+
+            margin: 0;
+
+            background: #111;
+
+            display: flex;
+
+            justify-content: center;
+
+            align-items: center;
+
+            height: 100vh;
+        }
+
+        video {
+
+            width: 90%;
+
+            max-width: 1200px;
+
+            border-radius: 12px;
+
+            background: black;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <video
+        id="video"
+        controls
+        autoplay
+    ></video>
+
+    <script>
+
+        const video = document.getElementById("video");
+
+        const videoSrc =
+            "http://localhost:5000/test-session-id2/master.m3u8";
+
+        if (Hls.isSupported()) {
+
+            const hls = new Hls();
+
+            hls.loadSource(videoSrc);
+
+            hls.attachMedia(video);
+
+            hls.on(
+                Hls.Events.MANIFEST_PARSED,
+                () => {
+                    video.play();
+                }
+            );
+
+        }
+
+        else if (
+            video.canPlayType(
+                "application/vnd.apple.mpegurl"
+            )
+        ) {
+
+            video.src = videoSrc;
+
+            video.addEventListener(
+                "loadedmetadata",
+                () => {
+                    video.play();
+                }
+            );
+        }
+
+        else {
+
+            alert(
+                "HLS not supported in this browser."
+            );
+        }
+
+    </script>
+
+</body>
+</html>
