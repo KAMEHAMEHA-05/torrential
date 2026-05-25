@@ -13,7 +13,7 @@ async def main():
 
     input_path = str(
         Path(
-            "~/Downloads/sample-avi-files-sample_1920x1080.avi"
+            "~/Downloads/4K HEVC 59.940 Broadcast Capture Sample.mkv"
         ).expanduser()
     )
 
@@ -23,7 +23,7 @@ async def main():
 
     playback_session = await determine_strategy(
         media_info,
-        "test-session-id2"
+        "test-session-id3"
     )
 
     print(playback_session)
