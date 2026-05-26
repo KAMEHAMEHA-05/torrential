@@ -8,29 +8,71 @@ class TorrentSession:
 
         settings = {
 
-            "enable_dht": True,
-
-            "enable_lsd": True,
-
-            "enable_upnp": True,
-
-            "enable_natpmp": True,
+            #
+            # NETWORK
+            #
 
             "listen_interfaces":
                 "0.0.0.0:6881",
 
-            "connections_limit": 500,
+            "enable_dht": True,
+            "enable_lsd": True,
+            "enable_upnp": True,
+            "enable_natpmp": True,
 
-            "active_downloads": 50,
+            #
+            # CONNECTIONS
+            #
 
+            "connections_limit": 1000,
+
+            "active_downloads": 100,
             "active_seeds": 50,
 
-            "aio_threads": 8,
+            "unchoke_slots_limit": 50,
 
-            "cache_size": 2048,
+            #
+            # REQUEST PIPELINING
+            #
+
+            "max_out_request_queue": 10000,
+
+            "whole_pieces_threshold": 30,
+
+            "request_timeout": 10,
+            "peer_timeout": 20,
+
+            #
+            # DISK / CACHE
+            #
+
+            "aio_threads": 32,
+
+            "cache_size": 8192,
+
+            "cache_expiry": 300,
+
+            #
+            # STREAMING
+            #
+
+            "strict_end_game_mode": False,
+
+            "use_read_cache": True,
+
+            "coalesce_reads": False,
+            "coalesce_writes": False,
+
+            #
+            # ALERTS
+            #
 
             "alert_mask":
-                lt.alert.category_t.all_categories
+                lt.alert.category_t.all_categories,
+            
+            "seed_choking_algorithm": 0,
+            "choking_algorithm": 0
+
         }
 
         self.session = lt.session(settings)

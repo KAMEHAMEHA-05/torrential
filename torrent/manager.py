@@ -40,9 +40,9 @@ class TorrentManager:
             })
         )
 
-        handle.set_sequential_download(
-            True
-        )
+        # handle.set_sequential_download(
+        #     True
+        # )
 
         info_hash = str(
             handle.info_hash()

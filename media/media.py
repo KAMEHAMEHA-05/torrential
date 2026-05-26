@@ -1,6 +1,7 @@
 import json
 import asyncio
 from pathlib import Path
+from media.parser import parse_media_info
 
 SUPPORTED_VIDEO_CODECS = [
     "h264"
@@ -14,6 +15,10 @@ SUPPORTED_CONTAINERS = [
     "mp4",
     "mov"
 ]
+
+PROBE_SIZE = "10M"
+
+ANALYZE_DURATION = "20M"
 
 async def run_ffprobe(file_path: str):
 
@@ -45,113 +50,154 @@ async def run_ffprobe(file_path: str):
 
 
 
-def get_video_profile(video_stream):
+# def get_video_profile(video_stream):
 
-    return video_stream.get("profile")
-
-
-def get_video_pixel_format(video_stream):
-
-    return video_stream.get("pix_fmt")
+#     return video_stream.get("profile")
 
 
-def get_video_channels(audio_stream):
+# def get_video_pixel_format(video_stream):
 
-    return audio_stream.get("channels")
-
-
-def get_audio_tracks(streams):
-
-    audio_tracks = []
-
-    for stream in streams:
-
-        if stream.get("codec_type") != "audio":
-            continue
-
-        audio_tracks.append({
-
-            "codec":
-                stream.get("codec_name"),
-
-            "channels":
-                get_video_channels(stream)
-        })
-
-    return audio_tracks
+#     return video_stream.get("pix_fmt")
 
 
-def get_subtitle_tracks(streams):
+# def get_video_channels(audio_stream):
 
-    subtitle_tracks = []
-
-    for stream in streams:
-
-        if stream.get("codec_type") != "subtitle":
-            continue
-
-        subtitle_tracks.append({
-
-            "codec":
-                stream.get("codec_name")
-        })
-
-    return subtitle_tracks
+#     return audio_stream.get("channels")
 
 
-async def analyze_media(file_path: str):
+# def get_audio_tracks(streams):
 
-    data = await run_ffprobe(file_path)
+#     audio_tracks = []
 
-    streams = data.get("streams", [])
+#     for stream in streams:
 
-    video_stream = None
+#         if stream.get("codec_type") != "audio":
+#             continue
 
-    for stream in streams:
+#         audio_tracks.append({
 
-        if stream.get("codec_type") == "video":
-            video_stream = stream
-            break
+#             "codec":
+#                 stream.get("codec_name"),
 
-    container = (
-        data.get("format", {})
-        .get("format_name", "")
-        .split(",")[0]
+#             "channels":
+#                 get_video_channels(stream)
+#         })
+
+#     return audio_tracks
+
+
+# def get_subtitle_tracks(streams):
+
+#     subtitle_tracks = []
+
+#     for stream in streams:
+
+#         if stream.get("codec_type") != "subtitle":
+#             continue
+
+#         subtitle_tracks.append({
+
+#             "codec":
+#                 stream.get("codec_name")
+#         })
+
+#     return subtitle_tracks
+
+
+async def analyze_media(
+    file_path: str
+):
+
+    raw_data = await run_ffprobe(
+        file_path
     )
 
-    return {
+    return parse_media_info(
+        raw_data
+    )
 
-        "container": container,
 
-        "video": {
+async def analyze_stream(
+    read_stream
+):
 
-            "codec":
-                video_stream.get("codec_name")
-                if video_stream else None,
+    process = (
+        await asyncio.create_subprocess_exec(
 
-            "profile":
-                get_video_profile(video_stream)
-                if video_stream else None,
+            "ffprobe",
 
-            "pix_fmt":
-                get_video_pixel_format(video_stream)
-                if video_stream else None,
+            "-v", "quiet",
 
-            "width":
-                video_stream.get("width")
-                if video_stream else None,
+            "-print_format", "json",
 
-            "height":
-                video_stream.get("height")
-                if video_stream else None
-        },
+            "-show_streams",
 
-        "audio":
-            get_audio_tracks(streams),
+            "-show_format",
 
-        "subtitles":
-            get_subtitle_tracks(streams)
-    }
+            "-probesize", "2M",
+
+            "-analyzeduration", "2M",
+
+            "-i", "pipe:0",
+
+            stdout=asyncio.subprocess.PIPE,
+
+            stdin=asyncio.subprocess.PIPE,
+
+            stderr=asyncio.subprocess.PIPE
+        )
+    )
+
+    try:
+
+        initial_data = (
+            await read_stream.read_for_analysis(
+                max_bytes=(
+                    4 * 1024 * 1024
+                )
+            )
+        )
+
+        process.stdin.write(
+            initial_data
+        )
+
+        try:
+
+            await process.stdin.drain()
+
+        except (
+            BrokenPipeError,
+            ConnectionResetError
+        ):
+
+            pass
+
+    finally:
+
+        try:
+            process.stdin.close()
+
+        except:
+            pass
+
+    stdout, stderr = (
+        await process.communicate()
+    )
+
+    if process.returncode != 0:
+
+        raise Exception(
+            stderr.decode()
+        )
+
+    raw_data = json.loads(
+        stdout.decode()
+    )
+
+    return parse_media_info(
+        raw_data
+    )
 
 if __name__ == "__main__":
     file_path = str(Path("~/Downloads/sample-2.mkv").expanduser())

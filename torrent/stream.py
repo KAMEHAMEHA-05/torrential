@@ -3,11 +3,20 @@ import asyncio
 from pathlib import Path
 
 from torrent.priorities import (
-    set_stream_priorities
+    update_priorities,
+    apply_deadlines
 )
 
 
+BOOTSTRAP_WINDOW = 16
+
+BOOTSTRAP_CHUNK_SIZE = 128 * 1024
+
+STARTUP_WINDOW = 48
+
 STREAM_CHUNK_SIZE = 1024 * 1024
+STARTUP_CHUNK_SIZE = 512 * 1024
+STEADY_CHUNK_SIZE = 4 * 1024 * 1024
 
 
 class TorrentReadStream:
@@ -17,7 +26,7 @@ class TorrentReadStream:
         handle,
         torrent_file,
         save_path,
-        buffer_window=32
+        buffer_window=128
     ):
 
         self.handle = handle
@@ -34,6 +43,10 @@ class TorrentReadStream:
 
         self.piece_length = (
             self.torrent_info.piece_length()
+        )
+
+        self.total_pieces = (
+            self.torrent_info.num_pieces()
         )
 
         self.file_path = (
@@ -60,18 +73,33 @@ class TorrentReadStream:
 
         self.file = None
 
+        self.active_pieces = set()
+
+        self.startup_complete = False
+
+        self.scheduler_task = None
+
+        self.bootstrap_complete = False
+
 
     async def start(self):
 
         self.running = True
-
         self.prioritize_file()
 
         await self.wait_for_file()
 
         self.file = open(
+
             self.file_path,
+
             "rb"
+        )
+
+        self.scheduler_task = (
+            asyncio.create_task(
+                self.scheduler_loop()
+            )
         )
 
 
@@ -103,6 +131,9 @@ class TorrentReadStream:
         if self.file:
             self.file.close()
 
+        if self.scheduler_task:
+            self.scheduler_task.cancel()
+
 
     async def wait_for_file(self):
 
@@ -132,64 +163,108 @@ class TorrentReadStream:
             self.current_piece()
         )
 
-        set_stream_priorities(
-            self.handle,
-
-            current_piece,
-
-            self.piece_end,
-
-            self.buffer_window
+        new_window = (
+            self.build_piece_window(
+                current_piece
+            )
         )
 
-        target_piece = min(
-            current_piece
-            +
-            self.buffer_window,
+        #
+        # bootstrap:
+        # first piece ONLY
+        #
 
-            self.piece_end
-        )
+        if not self.bootstrap_complete:
+
+            target_ready = 1
+
+        #
+        # startup:
+        # tiny playable buffer
+        #
+
+        elif not self.startup_complete:
+
+            target_ready = 2
+
+        #
+        # steady-state:
+        # full rolling window
+        #
+
+        else:
+
+            target_ready = len(
+                new_window
+            )
 
         while True:
 
-            ready = True
+            ready = 0
 
-            for piece in range(
-                current_piece,
-                target_piece
-            ):
+            for piece in new_window:
 
-                if not self.handle.have_piece(piece):
+                if self.handle.have_piece(
+                    piece
+                ):
 
-                    ready = False
-                    break
+                    ready += 1
 
-            if ready:
-                return
+            if ready >= target_ready:
+                break
 
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.005)
+
+        #
+        # bootstrap complete
+        #
+
+        if not self.bootstrap_complete:
+
+            self.bootstrap_complete = True
+
+        #
+        # startup complete
+        #
+
+        elif not self.startup_complete:
+
+            self.startup_complete = True
 
 
     async def read(self):
 
-        if not self.running:
-            return b""
-
-        remaining = (
-            self.file_size
-            -
-            self.current_offset
-        )
-
-        if remaining <= 0:
-            return b""
-
         await self.ensure_buffer()
 
-        read_size = min(
-            STREAM_CHUNK_SIZE,
-            remaining
-        )
+        #
+        # bootstrap
+        #
+
+        if not self.bootstrap_complete:
+
+            read_size = (
+                BOOTSTRAP_CHUNK_SIZE
+            )
+
+        #
+        # startup
+        #
+
+        elif not self.startup_complete:
+
+            read_size = (
+                STARTUP_CHUNK_SIZE
+            )
+
+        #
+        # steady-state
+        #
+
+        else:
+
+            read_size = (
+                STEADY_CHUNK_SIZE
+            )
 
         self.file.seek(
             self.current_offset
@@ -202,13 +277,345 @@ class TorrentReadStream:
         if not chunk:
             return b""
 
-        self.current_offset += len(chunk)
+        self.current_offset += len(
+            chunk
+        )
 
         return chunk
-
 
     async def seek(self, byte_offset):
 
         self.current_offset = byte_offset
 
         await self.ensure_buffer()
+
+
+    async def read_for_analysis(
+
+        self,
+
+        max_bytes=(
+            4 * 1024 * 1024
+        )
+    ):
+
+        current_piece = (
+            self.current_piece()
+        )
+
+        startup_window = set(
+
+            range(
+                current_piece,
+                min(
+                    current_piece + 4,
+                    self.piece_end
+                )
+            )
+        )
+
+        update_priorities(
+
+            self.handle,
+
+            self.active_pieces,
+
+            startup_window
+        )
+
+        apply_deadlines(
+
+            self.handle,
+
+            startup_window,
+
+            current_piece
+        )
+
+        self.active_pieces = (
+            startup_window
+        )
+
+        #
+        # only wait for first piece
+        #
+
+        while True:
+
+            if self.file_path.exists():
+
+                try:
+
+                    size = self.file_path.stat().st_size
+
+                    needed = (
+                        self.current_offset
+                        +
+                        (512 * 1024)
+                    )
+
+                    if size >= needed:
+                        break
+
+                except:
+                    pass
+
+            await asyncio.sleep(0.005)
+
+        self.file.seek(
+            self.current_offset
+        )
+
+        chunk = self.file.read(
+            max_bytes
+        )
+
+        self.current_offset += len(
+            chunk
+        )
+
+        return chunk
+    
+
+    def build_piece_window(
+
+        self,
+
+        current_piece
+    ):
+
+        #
+        # bootstrap mode
+        #
+
+        if not self.bootstrap_complete:
+
+            buffer_window = (
+                BOOTSTRAP_WINDOW
+            )
+
+        #
+        # startup mode
+        #
+
+        elif not self.startup_complete:
+
+            buffer_window = (
+                STARTUP_WINDOW
+            )
+
+        #
+        # steady-state
+        #
+
+        else:
+
+            buffer_window = (
+                self.buffer_window
+            )
+
+        stop = min(
+
+            current_piece
+            +
+            buffer_window,
+
+            self.piece_end
+        )
+
+        return set(
+
+            range(
+                current_piece,
+                stop
+            )
+        )
+    
+
+    async def scheduler_loop(self):
+
+        while self.running:
+
+            current_piece = (
+                self.current_piece()
+            )
+
+            new_window = (
+                self.build_piece_window(
+                    current_piece
+                )
+            )
+
+            update_priorities(
+
+                self.handle,
+
+                self.active_pieces,
+
+                new_window
+            )
+
+            apply_deadlines(
+
+                self.handle,
+
+                new_window,
+
+                current_piece,
+
+                startup=(
+                    not self.startup_complete
+                )
+            )
+
+            self.active_pieces = (
+                new_window
+            )
+
+            if not self.startup_complete:
+
+                await asyncio.sleep(0.005)
+
+            else:
+
+                await asyncio.sleep(0.05)
+
+    async def bootstrap(self):
+
+        self.burst_prioritize()
+
+        current_piece = (
+            self.current_piece()
+        )
+
+        bootstrap_window = set(
+
+            range(
+
+                current_piece,
+
+                min(
+                    current_piece
+                    +
+                    BOOTSTRAP_WINDOW,
+
+                    self.piece_end
+                )
+            )
+        )
+
+        #
+        # ultra aggressive startup
+        #
+
+        update_priorities(
+
+            self.handle,
+
+            self.active_pieces,
+
+            bootstrap_window
+        )
+
+        apply_deadlines(
+
+            self.handle,
+
+            bootstrap_window,
+
+            current_piece,
+
+            startup=True
+        )
+
+        self.active_pieces = (
+            bootstrap_window
+        )
+
+        #
+        # wait until first piece arrives
+        #
+
+        while not self.handle.have_piece(
+            current_piece
+        ):
+
+            await asyncio.sleep(
+                0.005
+            )
+
+    
+    def burst_prioritize(self):
+
+        current_piece = self.current_piece()
+
+        #
+        # HUGE startup fanout
+        #
+
+        burst_window = set(
+
+            range(
+
+                current_piece,
+
+                min(
+                    current_piece + 128,
+                    self.piece_end
+                )
+            )
+        )
+
+        #
+        # descending priorities
+        #
+
+        for i, piece in enumerate(burst_window):
+
+            #
+            # immediate playback region
+            #
+
+            if i < 8:
+
+                priority = 7
+
+            #
+            # near future
+            #
+
+            elif i < 32:
+
+                priority = 6
+
+            #
+            # future buffer
+            #
+
+            elif i < 64:
+
+                priority = 5
+
+            #
+            # deep prefetch
+            #
+
+            else:
+
+                priority = 3
+
+            self.handle.piece_priority(
+                piece,
+                priority
+            )
+
+            #
+            # AGGRESSIVE deadlines
+            #
+
+            self.handle.set_piece_deadline(
+
+                piece,
+
+                i * 10
+            )
