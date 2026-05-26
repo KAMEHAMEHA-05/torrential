@@ -1,5 +1,6 @@
 from pathlib import Path
 import libtorrent as lt
+import json
 
 VIDEO_EXTENSIONS = {
     ".mp4",

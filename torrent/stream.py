@@ -285,7 +285,73 @@ class TorrentReadStream:
 
     async def seek(self, byte_offset):
 
+        #
+        # move cursor
+        #
+
         self.current_offset = byte_offset
+
+        #
+        # rebuild priorities
+        # around seek target
+        #
+
+        current_piece = (
+            self.current_piece()
+        )
+
+        #
+        # AGGRESSIVE seek burst
+        #
+
+        self.burst_prioritize()
+
+        #
+        # rolling seek window
+        #
+
+        priorities = (
+            self.build_piece_window(
+                current_piece
+            )
+        )
+
+        #
+        # reprioritize swarm
+        #
+
+        update_priorities(
+
+            self.handle,
+
+            self.active_pieces,
+
+            priorities
+        )
+
+        #
+        # aggressive deadlines
+        #
+
+        apply_deadlines(
+
+            self.handle,
+
+            priorities,
+
+            current_piece,
+
+            startup=True
+        )
+
+        self.active_pieces = (
+            priorities
+        )
+
+        #
+        # wait until target region
+        # becomes playable
+        #
 
         await self.ensure_buffer()
 
@@ -618,4 +684,84 @@ class TorrentReadStream:
                 piece,
 
                 i * 10
+            )
+
+
+    async def wait_for_bytes(
+
+        self,
+
+        start_offset,
+
+        minimum_bytes=(
+            4 * 1024 * 1024
+        )
+    ):
+
+        target = (
+            start_offset
+            +
+            minimum_bytes
+        )
+
+        while True:
+
+            if self.file_path.exists():
+
+                try:
+
+                    size = (
+                        self.file_path
+                        .stat()
+                        .st_size
+                    )
+
+                    if size >= target:
+                        return
+
+                except:
+                    pass
+
+            await asyncio.sleep(
+                0.01
+            )
+
+
+    async def wait_for_bytes(
+
+        self,
+
+        start_offset,
+
+        minimum_bytes=(
+            4 * 1024 * 1024
+        )
+    ):
+
+        target = (
+            start_offset
+            +
+            minimum_bytes
+        )
+
+        while True:
+
+            if self.file_path.exists():
+
+                try:
+
+                    size = (
+                        self.file_path
+                        .stat()
+                        .st_size
+                    )
+
+                    if size >= target:
+                        return
+
+                except:
+                    pass
+
+            await asyncio.sleep(
+                0.01
             )
