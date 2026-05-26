@@ -356,6 +356,10 @@ async def main():
         "\nFinished"
     )
 
+    manager.release_torrent(
+        info_hash
+    ) 
+
 
 if __name__ == "__main__":
 

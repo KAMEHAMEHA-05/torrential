@@ -10,6 +10,19 @@ VIDEO_EXTENSIONS = {
     ".webm"
 }
 
+class TorrentContext:
+
+    def __init__(
+        self,
+        info_hash,
+        handle
+    ):
+
+        self.info_hash = info_hash
+
+        self.handle = handle
+
+        self.viewer_count = 0
 
 class TorrentManager:
 
@@ -18,13 +31,46 @@ class TorrentManager:
         self.session = torrent_session
 
         self.handles = {}
-
+        self.torrents = {}
 
     def add_magnet(
         self,
         magnet_uri,
         save_path
     ):
+
+        temp = lt.parse_magnet_uri(
+            magnet_uri
+        )
+
+        info_hash = str(
+            temp.info_hash
+        )
+
+        #
+        # already active
+        #
+
+        existing = self.torrents.get(
+            info_hash
+        )
+
+        if existing:
+
+            existing.viewer_count += 1
+
+            print(
+
+                "Reusing torrent:",
+
+                info_hash,
+
+                "viewers:",
+
+                existing.viewer_count
+            )
+
+            return info_hash
 
         params = {
 
@@ -34,33 +80,76 @@ class TorrentManager:
                 lt.storage_mode_t.storage_mode_sparse
         }
 
+        #
+        # load fastresume
+        #
+
+        resume_file = (
+
+            Path("./session/resume")
+            /
+            f"{info_hash}.fastresume"
+        )
+
+        if resume_file.exists():
+
+            try:
+
+                with open(
+                    resume_file,
+                    "rb"
+                ) as f:
+
+                    params[
+                        "resume_data"
+                    ] = f.read()
+
+                print(
+                    "Loaded fastresume"
+                )
+
+            except Exception as e:
+
+                print(
+                    "Failed loading resume:",
+                    e
+                )
+
         handle = (
             self.session.session.add_torrent({
+
                 "url": magnet_uri,
+
                 **params
             })
         )
 
-        # handle.set_sequential_download(
-        #     True
-        # )
+        context = TorrentContext(
 
-        info_hash = str(
-            handle.info_hash()
+            info_hash,
+
+            handle
         )
 
-        self.handles[
+        context.viewer_count = 1
+
+        self.torrents[
             info_hash
-        ] = handle
+        ] = context
 
         return info_hash
 
 
     def get_handle(self, info_hash):
 
-        handle = self.handles.get(
+        context = self.torrents.get(
             info_hash
         )
+
+        if not context:
+            return None
+
+        handle = context.handle
 
         if not handle:
             return None
@@ -145,3 +234,32 @@ class TorrentManager:
             })
 
         return result
+    
+    def release_torrent(
+        self,
+        info_hash
+    ):
+
+        context = self.torrents.get(
+            info_hash
+        )
+
+        if not context:
+            return
+
+        context.viewer_count -= 1
+
+        print(
+
+            "Released torrent:",
+
+            info_hash,
+
+            "viewers:",
+
+            context.viewer_count
+        )
+
+        #
+        # keep warm for now
+        #
