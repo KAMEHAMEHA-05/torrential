@@ -54,11 +54,24 @@
         const video = document.getElementById("video");
 
         const videoSrc =
-            "http://localhost:5000/test-session-id3/master.m3u8";
+            "http://localhost:5000/323b224fb72bd287887058408f02102958d03ac6/master.m3u8";
 
         if (Hls.isSupported()) {
 
-            const hls = new Hls();
+            const hls = new Hls({
+
+                liveDurationInfinity: true,
+
+                backBufferLength: 300,
+
+                maxBufferLength: 120,
+
+                maxMaxBufferLength: 240,
+
+                enableWorker: true,
+
+                lowLatencyMode: false,
+            });
 
             hls.loadSource(videoSrc);
 

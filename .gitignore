@@ -2,6 +2,15 @@
 /.venv
 session/session_state.json
 downloads/
-/.pyc
-/__pycache__/
+
+__pycache__/
+*.pyc
+
+*.ts
+
+fmp4
+
+resume/
+
+session_state.json
 

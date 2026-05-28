@@ -1,18 +1,20 @@
 import asyncio
-import subprocess
 
+from dataclasses import asdict
 from pprint import pprint
 
 from torrent.session import TorrentSession
 from torrent.manager import TorrentManager
 from torrent.stream import TorrentReadStream
 
-from media.media import analyze_stream
+from media.cache import build_torrent_media_id
+from media.resolver import resolve_playback_session
 
+from playback.hls_stream import HLSStreamSession
+from pipeline.producers import byte_stream_producer
 
 MAGNET = (
-    "magnet:?xt=urn:btih:"
-    "94e93e866a28302adce3e0a28038c4068734d8d6"
+    "magnet:?xt=urn:btih:323b224fb72bd287887058408f02102958d03ac6"
 )
 
 SAVE_PATH = "./downloads"
@@ -240,19 +242,50 @@ async def main():
     await stream.bootstrap()
 
     #
-    # OPTIONAL:
-    # analyze media
+    # BUILD MEDIA ID
+    #
+
+    media_id = build_torrent_media_id(
+
+        info_hash=info_hash,
+
+        file_index=video["index"],
+
+        size=video["size"]
+    )
+
+    print(
+        f"\nMedia ID: {media_id}\n"
+    )
+
+    #
+    # RESOLVE PLAYBACK SESSION
     #
 
     print(
-        "\nAnalyzing media...\n"
+        "\nResolving playback session...\n"
     )
 
-    media_info = await analyze_stream(
-        stream
+    playback = await resolve_playback_session(
+
+        media_id=media_id,
+
+        session_id="test_session",
+
+        read_stream=stream
     )
 
-    pprint(media_info)
+    #
+    # PRINT RESULT
+    #
+
+    print(
+        "\nPlayback Session:\n"
+    )
+
+    pprint(
+        asdict(playback)
+    )
 
     #
     # reset stream state
@@ -261,7 +294,65 @@ async def main():
     await stream.seek(0)
 
     #
-    # monitor download speed
+    # session queue
+    #
+
+    byte_queue = asyncio.Queue(
+        maxsize=128
+    )
+
+    #
+    # use torrent hash as session id
+    #
+
+    playback.session_id = (
+        info_hash
+    )
+
+    #
+    # START HLS ENGINE
+    #
+
+    print(
+        "\nStarting HLS engine...\n"
+    )
+
+    hls = HLSStreamSession(
+
+        playback_session=playback,
+
+        byte_queue=byte_queue
+    )
+
+    await hls.start()
+
+    print(
+
+        "\nHLS output directory:\n"
+
+        f"/tmp/hls/{info_hash}\n"
+    )
+
+    #
+    # START PRODUCER
+    #
+
+    print(
+        "\nStarting byte producer...\n"
+    )
+
+    producer_task = asyncio.create_task(
+
+        byte_stream_producer(
+
+            stream,
+
+            byte_queue
+        )
+    )
+
+    #
+    # monitor torrent
     #
 
     asyncio.create_task(
@@ -272,53 +363,12 @@ async def main():
     )
 
     #
-    # wait for enough buffer
-    #
-
-    await wait_for_playable(
-        stream
-    )
-
-    #
-    # START MPV
-    #
-
-    print(
-        "\nLaunching mpv...\n"
-    )
-
-    mpv = subprocess.Popen([
-
-        "mpv",
-
-        "--cache=yes",
-
-        "--cache-secs=30",
-
-        "--demuxer-max-bytes=512M",
-
-        "--demuxer-readahead-secs=60",
-
-        "--force-seekable=yes",
-
-        "--hr-seek=yes",
-
-        "--really-quiet",
-
-        str(stream.file_path)
-    ])
-
-    #
-    # keep torrent alive
+    # keep process alive
     #
 
     while True:
 
         status = handle.status()
-
-        #
-        # print progress
-        #
 
         print(
 
@@ -333,13 +383,13 @@ async def main():
         )
 
         #
-        # exit if mpv closes
+        # ffmpeg exited
         #
 
-        if mpv.poll() is not None:
+        if not hls.active:
 
             print(
-                "\nmpv exited\n"
+                "\nHLS session ended\n"
             )
 
             break
@@ -350,7 +400,11 @@ async def main():
     # cleanup
     #
 
+    await hls.stop()
+
     await stream.stop()
+
+    producer_task.cancel()
 
     print(
         "\nFinished"
@@ -358,7 +412,7 @@ async def main():
 
     manager.release_torrent(
         info_hash
-    ) 
+    )
 
 
 if __name__ == "__main__":
