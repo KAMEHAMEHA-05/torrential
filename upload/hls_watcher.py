@@ -1,6 +1,4 @@
 import asyncio
-import os
-
 from pathlib import Path
 
 import httpx
@@ -12,8 +10,6 @@ BIFROST_URL = (
 
 WATCH_ROOT = "/tmp/hls"
 
-TOPIC = "hls_upload"
-
 
 class HLSWatcher:
 
@@ -21,10 +17,19 @@ class HLSWatcher:
 
         self,
 
+        media_id,
+
         root=WATCH_ROOT
     ):
 
-        self.root = Path(root)
+        self.media_id = media_id
+
+        self.topic = media_id
+
+        self.root = (
+            Path(root)
+            / media_id
+        )
 
         self.seen = set()
 
@@ -41,7 +46,7 @@ class HLSWatcher:
             await client.post(
 
                 f"{BIFROST_URL}"
-                f"/topics/{TOPIC}/publish",
+                f"/topics/{self.topic}/publish",
 
                 json={
                     "payload": payload
@@ -53,13 +58,19 @@ class HLSWatcher:
 
         while True:
 
+            if not self.root.exists():
+
+                await asyncio.sleep(1)
+
+                continue
+
             for path in self.root.rglob("*"):
 
                 if not path.is_file():
                     continue
 
                 #
-                # skip temp files
+                # only upload HLS files
                 #
 
                 if path.suffix not in (
@@ -68,18 +79,21 @@ class HLSWatcher:
 
                     ".m3u8",
 
-                    ".mp4"
+                    ".mp4",
+
+                    ".vtt"
                 ):
                     continue
 
                 key = (
+
                     str(path),
 
                     path.stat().st_size
                 )
 
                 #
-                # already uploaded
+                # already seen
                 #
 
                 if key in self.seen:
@@ -97,7 +111,9 @@ class HLSWatcher:
                 }
 
                 print(
+
                     "[WATCHER]",
+
                     payload
                 )
 
@@ -110,7 +126,30 @@ class HLSWatcher:
 
 async def main():
 
-    watcher = HLSWatcher()
+    media_id = (
+        input(
+            "Media ID: "
+        ).strip()
+    )
+
+    async with httpx.AsyncClient() as client:
+
+        await client.post(
+
+            f"{BIFROST_URL}"
+            f"/topics/create",
+
+            json={
+
+                "name": media_id,
+
+                "maxsize": 0
+            }
+        )
+
+    watcher = HLSWatcher(
+        media_id=media_id
+    )
 
     await watcher.scan()
 
