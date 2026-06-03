@@ -11,11 +11,9 @@ from upload.uploader import (
     create_uploader
 )
 
-import os
-
-from dotenv import load_dotenv
-
-load_dotenv()
+from config.singleton import (
+    config
+)
 
 
 class UploadSession:
@@ -41,22 +39,13 @@ class UploadSession:
 
                 "r2",
 
-                account_id=os.getenv(
-                    "R2_ACCOUNT_ID"
-                ),
+                account_id=config.config.r2.account_id,
 
-                access_key_id=os.getenv(
-                    "R2_ACCESS_KEY_ID"
-                ),
+                access_key_id=config.config.r2.access_key_id,
 
-                secret_access_key=os.getenv(
-                    "R2_SECRET_ACCESS_KEY"
-                ),
+                secret_access_key=config.config.r2.secret_access_key,
 
-                bucket_name=os.getenv(
-                    "R2_BUCKET_NAME",
-                    "streamdeck-media"
-                )
+                bucket_name=config.config.r2.bucket_name
             )
         )
 

@@ -3,9 +3,13 @@ from pathlib import Path
 
 import httpx
 
+from config.singleton import (
+    config
+)
+
 
 BIFROST_URL = (
-    "http://localhost:8001"
+    config.config.bifrost.url
 )
 
 WATCH_ROOT = "/tmp/hls"
