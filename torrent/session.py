@@ -274,3 +274,13 @@ class TorrentSession:
                         f.write(data)
 
             await asyncio.sleep(30)
+
+    async def stop(self):
+
+        self.running = False
+
+        self.save_state()
+
+        print(
+            "Torrent session stopped"
+        )

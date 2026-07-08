@@ -17,26 +17,34 @@ WATCH_ROOT = "/tmp/hls"
 
 class HLSWatcher:
 
-    def __init__(
-
-        self,
-
-        media_id,
-
-        root=WATCH_ROOT
-    ):
-
+    def __init__(self, media_id, root=WATCH_ROOT):
         self.media_id = media_id
-
         self.topic = media_id
-
-        self.root = (
-            Path(root)
-            / media_id
-        )
-
+        self.root = Path(root) / media_id
         self.seen = set()
 
+        self.topic_verified = False
+
+    async def ensure_topic(self):
+
+        if self.topic_verified:
+            return
+
+        async with httpx.AsyncClient() as client:
+
+            try:
+                await client.post(
+                    f"{BIFROST_URL}/topics/create",
+                    json={
+                        "name": self.topic,
+                        "maxsize": 0
+                    }
+                )
+
+            except Exception:
+                pass
+
+        self.topic_verified = True
 
     async def publish(
 
@@ -44,6 +52,8 @@ class HLSWatcher:
 
         payload
     ):
+        
+        await self.ensure_topic()
 
         async with httpx.AsyncClient() as client:
 

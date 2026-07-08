@@ -16,7 +16,13 @@ STARTUP_WINDOW = 48
 
 STREAM_CHUNK_SIZE = 1024 * 1024
 STARTUP_CHUNK_SIZE = 512 * 1024
-STEADY_CHUNK_SIZE = 4 * 1024 * 1024
+STEADY_CHUNK_SIZE = 512 * 1024
+
+
+MIN_PLAYABLE_PIECES = 4
+PLAYABLE_FRACTION = 0.125  
+PIECE_WAIT_TIMEOUT = 60  
+PIECE_WAIT_LOG_INTERVAL = 5  
 
 
 class TorrentReadStream:
@@ -96,11 +102,11 @@ class TorrentReadStream:
             "rb"
         )
 
-        self.scheduler_task = (
-            asyncio.create_task(
-                self.scheduler_loop()
-            )
-        )
+        # self.scheduler_task = (
+        #     asyncio.create_task(
+        #         self.scheduler_loop()
+        #     )
+        # )
 
 
     def prioritize_file(self):
@@ -189,14 +195,21 @@ class TorrentReadStream:
 
         #
         # steady-state:
-        # full rolling window
+        # require only a small playable prefix rather than the entire window
         #
 
         else:
 
-            target_ready = len(
-                new_window
+            # Adaptive target: at least MIN_PLAYABLE_PIECES, or PLAYABLE_FRACTION of the window
+            computed = int(len(new_window) * PLAYABLE_FRACTION)
+            target_ready = min(
+                len(new_window),
+                max(MIN_PLAYABLE_PIECES, computed)
             )
+
+        # Wait loop with logging and overall timeout to avoid blocking forever
+        loop_start = asyncio.get_event_loop().time()
+        last_log = loop_start
 
         while True:
 
@@ -212,6 +225,34 @@ class TorrentReadStream:
 
             if ready >= target_ready:
                 break
+
+            now = asyncio.get_event_loop().time()
+
+            # periodic progress log so operator can see what's missing
+            if now - last_log >= PIECE_WAIT_LOG_INTERVAL:
+                print(
+                    f"[ensure_buffer] current_piece={current_piece} "
+                    f"ready={ready}/{len(new_window)} "
+                    f"target={target_ready}"
+                )
+                last_log = now
+
+            # global timeout: if nothing sufficient has arrived in PIECE_WAIT_TIMEOUT seconds,
+            # proceed with a fallback rather than block forever
+            if now - loop_start > PIECE_WAIT_TIMEOUT:
+                print(
+                    f"[ensure_buffer] timeout after {PIECE_WAIT_TIMEOUT}s: "
+                    f"ready={ready}/{len(new_window)}. Proceeding with fallback."
+                )
+
+                # fallback behavior:
+                # - if at least one piece ready, proceed (allows streaming to continue)
+                # - otherwise sleep briefly and keep trying (swarm may be initializing)
+                if ready >= 1:
+                    break
+                else:
+                    await asyncio.sleep(0.05)
+                    continue
 
             await asyncio.sleep(0.005)
 
@@ -231,55 +272,48 @@ class TorrentReadStream:
 
             self.startup_complete = True
 
-
     async def read(self):
 
+        # ensure window/pieces are prioritized
         await self.ensure_buffer()
 
-        #
-        # bootstrap
-        #
-
+        # determine read size depending on mode
         if not self.bootstrap_complete:
-
-            read_size = (
-                BOOTSTRAP_CHUNK_SIZE
-            )
-
-        #
-        # startup
-        #
-
+            read_size = BOOTSTRAP_CHUNK_SIZE
         elif not self.startup_complete:
-
-            read_size = (
-                STARTUP_CHUNK_SIZE
-            )
-
-        #
-        # steady-state
-        #
-
+            read_size = STARTUP_CHUNK_SIZE
         else:
+            read_size = STEADY_CHUNK_SIZE
 
-            read_size = (
-                STEADY_CHUNK_SIZE
-            )
+        # Wait until at least one byte is available, but avoid busy loop
+        # file.seek/current_offset are relative to file start here
+        while True:
+            try:
+                total_size = self.file_path.stat().st_size
+            except Exception:
+                total_size = 0
 
-        self.file.seek(
-            self.current_offset
-        )
+            available = total_size - self.current_offset
 
-        chunk = self.file.read(
-            read_size
-        )
+            if available > 0:
+                break
+
+            # If the torrent completed and file hasn't grown, treat as EOF
+            # Otherwise sleep briefly and retry
+            await asyncio.sleep(0.01)
+
+        # don't read more than available bytes
+        to_read = min(read_size, max(1, available))
+
+        # read only the bytes present
+        self.file.seek(self.current_offset)
+        chunk = self.file.read(to_read)
 
         if not chunk:
+            # treat as EOF if nothing could be read
             return b""
 
-        self.current_offset += len(
-            chunk
-        )
+        self.current_offset += len(chunk)
 
         return chunk
 
@@ -546,6 +580,70 @@ class TorrentReadStream:
 
                 await asyncio.sleep(0.05)
 
+    # async def bootstrap(self):
+
+    #     self.burst_prioritize()
+
+    #     current_piece = (
+    #         self.current_piece()
+    #     )
+
+    #     bootstrap_window = set(
+
+    #         range(
+
+    #             current_piece,
+
+    #             min(
+    #                 current_piece
+    #                 +
+    #                 BOOTSTRAP_WINDOW,
+
+    #                 self.piece_end
+    #             )
+    #         )
+    #     )
+
+    #     #
+    #     # ultra aggressive startup
+    #     #
+
+    #     update_priorities(
+
+    #         self.handle,
+
+    #         self.active_pieces,
+
+    #         bootstrap_window
+    #     )
+
+    #     apply_deadlines(
+
+    #         self.handle,
+
+    #         bootstrap_window,
+
+    #         current_piece,
+
+    #         startup=True
+    #     )
+
+    #     self.active_pieces = (
+    #         bootstrap_window
+    #     )
+
+    #     #
+    #     # wait until first piece arrives
+    #     #
+
+    #     while not self.handle.have_piece(
+    #         current_piece
+    #     ):
+
+    #         await asyncio.sleep(
+    #             0.005
+    #         )
+
     async def bootstrap(self):
 
         self.burst_prioritize()
@@ -554,62 +652,32 @@ class TorrentReadStream:
             self.current_piece()
         )
 
-        bootstrap_window = set(
+        print(
+            "BOOTSTRAP current_piece:",
+            current_piece
+        )
 
-            range(
-
-                current_piece,
-
-                min(
-                    current_piece
-                    +
-                    BOOTSTRAP_WINDOW,
-
-                    self.piece_end
-                )
+        print(
+            "BOOTSTRAP have_piece:",
+            self.handle.have_piece(
+                current_piece
             )
         )
-
-        #
-        # ultra aggressive startup
-        #
-
-        update_priorities(
-
-            self.handle,
-
-            self.active_pieces,
-
-            bootstrap_window
-        )
-
-        apply_deadlines(
-
-            self.handle,
-
-            bootstrap_window,
-
-            current_piece,
-
-            startup=True
-        )
-
-        self.active_pieces = (
-            bootstrap_window
-        )
-
-        #
-        # wait until first piece arrives
-        #
 
         while not self.handle.have_piece(
             current_piece
         ):
 
-            await asyncio.sleep(
-                0.005
+            print(
+                "waiting on",
+                current_piece
             )
 
+            await asyncio.sleep(1)
+
+        print(
+            "BOOTSTRAP COMPLETE"
+        )
     
     def burst_prioritize(self):
 

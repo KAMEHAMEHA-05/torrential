@@ -14,7 +14,7 @@ from playback.hls_stream import HLSStreamSession
 from pipeline.producers import byte_stream_producer
 
 MAGNET = (
-    "magnet:?xt=urn:btih:323b224fb72bd287887058408f02102958d03ac6"
+    "magnet:?xt=urn:btih:94e93e866a28302adce3e0a28038c4068734d8d6"
 )
 
 SAVE_PATH = "./downloads"
@@ -233,13 +233,25 @@ async def main():
         "\nStarting stream..."
     )
 
+    print("A")
+
     await stream.start()
+    print("B")
 
     #
     # AGGRESSIVE BOOTSTRAP
     #
 
-    await stream.bootstrap()
+    asyncio.create_task(
+
+        monitor_download(
+            stream
+        )
+    )
+    print("C")
+
+    #await stream.bootstrap()
+    print("D")
 
     #
     # BUILD MEDIA ID
@@ -266,6 +278,8 @@ async def main():
         "\nResolving playback session...\n"
     )
 
+    print("E")
+
     playback = await resolve_playback_session(
 
         media_id=media_id,
@@ -274,6 +288,8 @@ async def main():
 
         read_stream=stream
     )
+
+    print("F")
 
     #
     # PRINT RESULT
@@ -291,7 +307,33 @@ async def main():
     # reset stream state
     #
 
+    print("G")
+
+    status = handle.status()
+
+    print(
+        "progress:",
+        status.progress,
+    )
+
+    print(
+        "peers:",
+        status.num_peers,
+    )
+
+    print(
+        "download rate:",
+        status.download_rate,
+    )
+
+    print(
+        "total done:",
+        status.total_done,
+    )
+
     await stream.seek(0)
+
+    print("H")
 
     #
     # session queue
@@ -324,7 +366,11 @@ async def main():
         byte_queue=byte_queue
     )
 
+    print("I")
+
     await hls.start()
+
+    print("J")
 
     print(
 
@@ -354,13 +400,6 @@ async def main():
     #
     # monitor torrent
     #
-
-    asyncio.create_task(
-
-        monitor_download(
-            stream
-        )
-    )
 
     #
     # keep process alive

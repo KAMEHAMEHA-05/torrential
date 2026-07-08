@@ -436,9 +436,16 @@ class Pipeline:
             # GET VIDEO FILE
             #
 
+            pipeline = (
+                self._active_pipelines[
+                    media_id
+                ]
+            )
+
             info_hash = (
-                self.torrent_manager
-                .get_info_hash(magnet)
+                pipeline[
+                    "info_hash"
+                ]
             )
 
             files = (
@@ -536,7 +543,7 @@ class Pipeline:
             #
 
             byte_queue = asyncio.Queue(
-                maxsize=128
+                maxsize=1024
             )
 
             #
@@ -1063,3 +1070,5 @@ class Pipeline:
             for media_id, p
             in self._active_pipelines.items()
         }
+
+

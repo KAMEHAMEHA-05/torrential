@@ -10,6 +10,11 @@ Path(HLS_ROOT).mkdir(
     exist_ok=True
 )
 
+STDIN_DRAIN_TIMEOUT = 5
+STDIN_DRAIN_RETRIES = 3               # how many times to retry on timeout before failing
+STDIN_DRAIN_BACKOFF = 0.5             # seconds, linear backoff between retries
+STDIN_WRITE_SLICE = 64 * 1024
+
 
 #
 # global transport queue
@@ -22,7 +27,7 @@ Path(HLS_ROOT).mkdir(
 #
 
 GLOBAL_BYTE_QUEUE = asyncio.Queue(
-    maxsize=128
+    maxsize=1024
 )
 
 
@@ -300,56 +305,76 @@ class HLSStreamSession:
     async def consume_bytes(self):
 
         try:
-
             while True:
+                chunk = await self.byte_queue.get()
 
-                chunk = (
-                    await self.byte_queue.get()
-                )
-
-                #
                 # shutdown sentinel
-                #
-
                 if chunk is None:
-                    print(
-                        "[CONSUMER] Shutdown signal received")
+                    print("[CONSUMER] Shutdown signal received")
                     break
 
-                self.process.stdin.write(
-                    chunk
-                )
+                try:
+                    # Write the chunk in slices so the pipe buffer can drain incrementally.
+                    offset = 0
+                    total_len = len(chunk)
 
-                print(
-                    f"[CONSUMER] "
-                    f"chunk_size={len(chunk)} "
-                    f"queue={self.byte_queue.qsize()}"
-                )
+                    while offset < total_len:
+                        end = min(offset + STDIN_WRITE_SLICE, total_len)
+                        slice_ = chunk[offset:end]
 
-                # await (
-                #     self.process.stdin.drain()
-                # )
+                        try:
+                            self.process.stdin.write(slice_)
+                        except (BrokenPipeError, ConnectionResetError) as e:
+                            print("[CONSUMER] Broken pipe on write:", e)
+                            raise
 
-                self.byte_queue.task_done()
+                        # wait for the slice to be drained with retries
+                        drained = False
+                        for attempt in range(1, STDIN_DRAIN_RETRIES + 1):
+                            try:
+                                await asyncio.wait_for(
+                                    self.process.stdin.drain(),
+                                    timeout=STDIN_DRAIN_TIMEOUT
+                                )
+                                drained = True
+                                break
+                            except asyncio.TimeoutError:
+                                print(
+                                    f"[CONSUMER] stdin.drain() timeout (>{STDIN_DRAIN_TIMEOUT}s) "
+                                    f"attempt={attempt}/{STDIN_DRAIN_RETRIES} queue={self.byte_queue.qsize()}"
+                                )
+                                # short backoff before retrying
+                                await asyncio.sleep(STDIN_DRAIN_BACKOFF * attempt)
 
-        except (
+                        if not drained:
+                            # persistent stall -- abort consumer loop (will close stdin and stop HLS)
+                            print("[CONSUMER] persistent stdin.drain() failures, aborting HLS consumer")
+                            raise BrokenPipeError("stdin.drain() persistent failures")
 
-            BrokenPipeError,
+                        offset = end
 
-            ConnectionResetError
-        ):
+                    print(
+                        f"[CONSUMER] chunk_size={total_len} queue={self.byte_queue.qsize()}"
+                    )
 
-            pass
+                except (BrokenPipeError, ConnectionResetError) as e:
+                    print("[CONSUMER] Broken pipe/connection reset:", e)
+                    break
+
+                finally:
+                    # mark task done for the queue item
+                    try:
+                        self.byte_queue.task_done()
+                    except Exception:
+                        pass
 
         finally:
-
+            # best-effort close of stdin
             try:
-
-                self.process.stdin.close()
-
-            except:
+                if self.process and self.process.stdin:
+                    self.process.stdin.close()
+            except Exception:
                 pass
-
 
     async def monitor(self):
 

@@ -7,7 +7,7 @@ from config.singleton import (
     config
 )
 
-from backends.r2 import (
+from upload.backends.r2 import (
     R2Uploader
 )
 
