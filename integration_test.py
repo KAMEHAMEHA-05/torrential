@@ -13,8 +13,12 @@ from pipeline.main import (
 )
 
 
+# MAGNET = (
+#     "magnet:?xt=urn:btih:94e93e866a28302adce3e0a28038c4068734d8d6"
+# )
+
 MAGNET = (
-    "magnet:?xt=urn:btih:94e93e866a28302adce3e0a28038c4068734d8d6"
+    "magnet:?xt=urn:btih:0f67fd75f3759d1eac7c03349031be0a3d4666c8&dn=Torrentio%0A1080p"
 )
 
 

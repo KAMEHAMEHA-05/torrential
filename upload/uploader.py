@@ -1,5 +1,5 @@
 import asyncio
-import os
+import random
 
 import httpx
 
@@ -38,81 +38,65 @@ def create_uploader(
 
 
 class UploadWorker:
-
-    def __init__(
-
-        self,
-
-        topic,
-
-        uploader
-    ):
-
+    def __init__(self, topic, uploader, concurrency=3):
         self.topic = topic
-
         self.uploader = uploader
+        self._sem = asyncio.Semaphore(concurrency)
+        self._stop = False
 
+    async def _do_upload(self, payload):
+        # Simple retry with backoff
+        max_retries = 3
+        backoff = 1.0
+        for attempt in range(1, max_retries + 1):
+            try:
+                # uploader.upload_file is async (and now runs boto3 in a thread)
+                result = await self.uploader.upload_file(
+                    local_path=payload["path"],
+                    object_name=f"{self.topic}/{payload['filename']}"
+                )
+                print("[UPLOADED]", result)
+                return True
+            except Exception as e:
+                print(f"[UPLOAD] attempt={attempt} failed for {payload['filename']}: {e}")
+                if attempt == max_retries:
+                    print(f"[UPLOAD] giving up on {payload['filename']}")
+                    return False
+                await asyncio.sleep(backoff + random.random() * 0.5)
+                backoff *= 2
 
     async def consume(self):
-
-        async with httpx.AsyncClient(
-
-            timeout=None
-        ) as client:
-
-            while True:
-
-                response = await client.post(
-
-                    f"{BIFROST_URL}"
-                    f"/topics/{self.topic}/consume"
-                )
-
-                data = response.json()
-
-                if not data.get(
-                    "success"
-                ):
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            while not self._stop:
+                try:
+                    resp = await client.post(f"{BIFROST_URL}/topics/{self.topic}/consume")
+                except Exception as e:
+                    print("[UPLOAD] error contacting Bifrost consume endpoint:", e)
+                    # avoid tight retry loop
+                    await asyncio.sleep(1)
                     continue
 
-                payload = (
+                # try to parse JSON safely
+                try:
+                    data = resp.json()
+                except Exception as e:
+                    print("[UPLOAD] non-JSON response from Bifrost consume:", e, "status:", resp.status_code)
+                    await asyncio.sleep(1)
+                    continue
 
-                    data[
-                        "message"
-                    ][
-                        "payload"
-                    ]
-                )
+                # Check if there was no message
+                if not data.get("success"):
+                    # No message currently — sleep a short while to avoid tight loop
+                    await asyncio.sleep(0.5)
+                    continue
 
-                print(
+                payload = data["message"]["payload"]
+                print("[UPLOAD JOB]", payload)
 
-                    "[UPLOAD JOB]",
-
-                    payload
-                )
-
-                result = await (
-
-                    self.uploader.upload_file(
-
-                        local_path=
-                        payload["path"],
-
-                        object_name=(
-
-                            f"{self.topic}/"
-
-                            f"{payload['filename']}"
-                        )
-                    )
-                )
-
-                print(
-
-                    "[UPLOADED]",
-
-                    result
-                )
+                # Limit concurrency for uploads using semaphore
+                async with self._sem:
+                    # run upload (with retries inside _do_upload)
+                    await self._do_upload(payload)
 
 
 async def main():

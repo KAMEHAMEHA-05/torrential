@@ -46,26 +46,20 @@ class HLSWatcher:
 
         self.topic_verified = True
 
-    async def publish(
-
-        self,
-
-        payload
-    ):
-        
+    async def publish(self, payload):
         await self.ensure_topic()
-
-        async with httpx.AsyncClient() as client:
-
-            await client.post(
-
-                f"{BIFROST_URL}"
-                f"/topics/{self.topic}/publish",
-
-                json={
-                    "payload": payload
-                }
-            )
+        backoff = 0.5
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    await client.post(f"{BIFROST_URL}/topics/{self.topic}/publish",
+                                      json={"payload": payload})
+                return
+            except Exception as e:
+                print(f"[WATCHER] publish attempt={attempt+1} failed: {e}")
+                await asyncio.sleep(backoff)
+                backoff *= 2
+        print("[WATCHER] publish giving up after retries for", payload)
 
 
     async def scan(self):

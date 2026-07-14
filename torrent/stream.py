@@ -102,11 +102,11 @@ class TorrentReadStream:
             "rb"
         )
 
-        # self.scheduler_task = (
-        #     asyncio.create_task(
-        #         self.scheduler_loop()
-        #     )
-        # )
+        self.scheduler_task = (
+            asyncio.create_task(
+                self.scheduler_loop()
+            )
+        )
 
 
     def prioritize_file(self):

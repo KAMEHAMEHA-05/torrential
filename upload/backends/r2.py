@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import boto3
+import asyncio
 
 
 class R2Uploader:
@@ -44,35 +45,23 @@ class R2Uploader:
         )
 
 
-    async def upload_file(
-
-        self,
-
-        local_path,
-
-        object_name=None
-    ):
-
+    async def upload_file(self, local_path, object_name=None):
         path = Path(local_path)
-
         if object_name is None:
-
             object_name = path.name
 
-        self.client.upload_file(
+        # Run the blocking boto3 call in a thread so it doesn't block the event loop
+        def _upload():
+            self.client.upload_file(
+                Filename=str(path),
+                Bucket=self.bucket_name,
+                Key=object_name
+            )
 
-            Filename=str(path),
-
-            Bucket=self.bucket_name,
-
-            Key=object_name
-        )
+        await asyncio.to_thread(_upload)
 
         return {
-
             "success": True,
-
             "bucket": self.bucket_name,
-
             "object": object_name
         }
