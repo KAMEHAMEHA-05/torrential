@@ -1,30 +1,62 @@
+import argparse
 import asyncio
-
-from torrent.session import (
-    TorrentSession
-)
-
-from torrent.manager import (
-    TorrentManager
-)
-
-from pipeline.main import (
-    Pipeline
-)
-
 import time
+from pathlib import Path
+
+from torrent.session import TorrentSession
+from torrent.manager import TorrentManager
+
+from pipeline.main import Pipeline, SAVE_PATH
+
+TERMINAL = ("completed", "failed", "cancelled")
+
+# how much of a (non-HLS) video must be on disk before mpv opens it
+MPV_START_BYTES = 64 * 1024 * 1024
 
 
-# MAGNET = (
-#     "magnet:?xt=urn:btih:94e93e866a28302adce3e0a28038c4068734d8d6"
-# )
+def parse_args():
 
-# MAGNET = (
-#     "magnet:?xt=urn:btih:0f67fd75f3759d1eac7c03349031be0a3d4666c8&dn=Torrentio%0A1080p"
-# )
+    p = argparse.ArgumentParser(
+        description="Stream / download a torrent, optionally HLS + upload + mpv"
+    )
 
-MAGNET = (
-    r"magnet:?xt=urn:btih:b0d4d04b968c29d8d8d3266e60a21c618eec675c&dn=Torrentio%0A1080p&tr=tracker%3Audp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=tracker%3Audp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce&tr=tracker%3Audp%3A%2F%2Fopen.demonii.com%3A1337%2Fannounce&tr=tracker%3Audp%3A%2F%2Fopen.tracker.cl%3A1337%2Fannounce&tr=tracker%3Audp%3A%2F%2Fexodus.desync.com%3A6969%2Fannounce&tr=tracker%3Ahttp%3A%2F%2Ftracker.qu.ax%3A6969%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker.ducks.party%3A1984%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker.bittor.pw%3A1337%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker.tryhackx.org%3A6969%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker.corpscorp.online%3A80%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker.nyaa.vc%3A6969%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker-udp.gbitt.info%3A80%2Fannounce&tr=tracker%3Audp%3A%2F%2Fexplodie.org%3A6969%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker.gmi.gd%3A6969%2Fannounce&tr=tracker%3Ahttp%3A%2F%2Ftracker.dler.org%3A6969%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker2.dler.org%3A80%2Fannounce&tr=tracker%3Ahttp%3A%2F%2Ftracker.dler.com%3A6969%2Fannounce&tr=tracker%3Ahttp%3A%2F%2Ftracker.renfei.net%3A8080%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker.peerfect.org%3A6969%2Fannounce&tr=tracker%3Ahttp%3A%2F%2Fnyaa.tracker.wf%3A7777%2Fannounce&tr=tracker%3Ahttp%3A%2F%2Fanidex.moe%3A6969%2Fannounce&tr=tracker%3Ahttp%3A%2F%2Ftracker.anirena.com%3A80%2Fannounce&tr=tracker%3Audp%3A%2F%2Ftracker.uw0.xyz%3A6969%2Fannounce&tr=tracker%3Ahttp%3A%2F%2Fshare.camoe.cn%3A8080%2Fannounce&tr=tracker%3Ahttp%3A%2F%2Ft.nyaatracker.com%3A80%2Fannounce&tr=b0d4d04b968c29d8d8d3266e60a21c618eec675c")
+    p.add_argument("magnet", help="magnet URI (quote it in your shell)")
+
+    p.add_argument(
+        "--hls",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="HLS one video from the torrent (default: on; use --no-hls)",
+    )
+
+    p.add_argument(
+        "--upload",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="upload outputs (default: on; --no-upload just saves to --save-path)",
+    )
+
+    p.add_argument(
+        "--video-id",
+        type=int,
+        default=None,
+        help="file index of the video to use (default: largest video)",
+    )
+
+    p.add_argument(
+        "--save-path",
+        default=SAVE_PATH,
+        help=f"where files are saved (default: {SAVE_PATH})",
+    )
+
+    p.add_argument(
+        "--mpv",
+        action="store_true",
+        help="play the video in mpv while it is downloading (video torrents only)",
+    )
+
+    return p.parse_args()
+
 
 async def diagnose(manager, info_hash, session, duration=60):
     handle = manager.get_handle(info_hash)
@@ -41,17 +73,14 @@ async def diagnose(manager, info_hash, session, duration=60):
                 "download_rate": st.download_rate,
                 "up_rate": st.upload_rate,
             })
-            # peer info may be expensive; iterate if available
             try:
                 peers = handle.get_peer_info()
                 print("Peers count from API:", len(peers))
                 for p in peers[:10]:
-                    # p.ip, p.client, p.flags exist in libtorrent
                     print(" peer:", getattr(p, "ip", None), getattr(p, "client", None), getattr(p, "flags", None))
             except Exception as e:
                 print("peer info read error:", e)
 
-        # pull alerts from the session (session is TorrentSession.session)
         try:
             alerts = session.session.pop_alerts()
             for a in alerts:
@@ -61,44 +90,149 @@ async def diagnose(manager, info_hash, session, duration=60):
 
         await asyncio.sleep(1)
 
-async def main():
+
+#
+# mpv helpers
+#
+
+async def wait_for_hls_playlist(pipeline, media_id, hls_dir):
+    """
+    Wait until ffmpeg has written a playlist with at least one segment.
+    Returns the path to open (master playlist if there is one), or None if
+    the pipeline ended first.
+    """
+
+    hls_dir = Path(hls_dir)
+
+    while True:
+
+        status = await pipeline.status(media_id)
+
+        if not status or status["status"] in TERMINAL:
+            return None
+
+        playlists = []
+
+        if hls_dir.exists():
+            for pl in hls_dir.rglob("*.m3u8"):
+                try:
+                    playlists.append((pl, pl.read_text(errors="ignore")))
+                except OSError:
+                    pass
+
+        if any("#EXTINF" in text for _, text in playlists):
+
+            for pl, text in playlists:
+                if "#EXT-X-STREAM-INF" in text:
+                    return pl
+
+            return next(pl for pl, text in playlists if "#EXTINF" in text)
+
+        await asyncio.sleep(0.5)
+
+
+async def wait_for_video_bytes(pipeline, media_id):
+    """
+    Wait until the start of the (non-HLS) video is on disk.
+    Returns the file path, or None if the pipeline ended first.
+    """
+
+    while True:
+
+        status = await pipeline.status(media_id)
+
+        if not status:
+            return None
+
+        path = status.get("video_path")
+        size = status.get("video_size", 0)
+        got = status.get("video_downloaded", 0)
+
+        if path and Path(path).exists() and got >= min(MPV_START_BYTES, size):
+            return path
+
+        if status["status"] in TERMINAL:
+            return None
+
+        await asyncio.sleep(1)
+
+
+async def play_in_mpv(pipeline, media_id, state):
+    """Background task: open mpv once there is something to play."""
+
+    status = await pipeline.status(media_id)
+
+    if status.get("hls_dir"):
+        print("[MPV] waiting for HLS playlist...")
+        target = await wait_for_hls_playlist(
+            pipeline, media_id, status["hls_dir"]
+        )
+
+    else:
+        print("[MPV] waiting for enough of the video to download...")
+        target = await wait_for_video_bytes(pipeline, media_id)
+
+    if target is None:
+        print("[MPV] pipeline ended before playback could start")
+        return
+
+    print(f"[MPV] playing {target}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec("mpv", str(target))
+    except FileNotFoundError:
+        print("[MPV] mpv not found on PATH, skipping playback")
+        return
+
+    state["proc"] = proc
+
+    await proc.wait()
+
+    print("[MPV] mpv exited (pipeline keeps running)")
+
+
+async def main(args):
     print("MAIN STARTED")
 
-    torrent_session = (
-        TorrentSession()
-    )
+    torrent_session = TorrentSession()
 
     await torrent_session.start()
 
-    torrent_manager = (
-        TorrentManager(
-            torrent_session
-        )
-    )
+    torrent_manager = TorrentManager(torrent_session)
 
-    pipeline = Pipeline(
+    pipeline = Pipeline(torrent_session, torrent_manager)
 
-        torrent_session,
-
-        torrent_manager
-    )
+    media_id = None
+    mpv_task = None
+    mpv_state = {}
 
     try:
 
-        #
-        # start stream
-        #
-
-        media_id = await (
-            pipeline.start(
-                MAGNET
-            )
+        media_id = await pipeline.start(
+            args.magnet,
+            hls=args.hls,
+            upload=args.upload,
+            video_id=args.video_id,
+            save_path=args.save_path,
+            sequential=args.mpv,
         )
 
-        print(
-            f"\nMEDIA ID:"
-            f"\n{media_id}\n"
-        )
+        print(f"\nMEDIA ID:\n{media_id}\n")
+
+        #
+        # mpv: only if asked for AND the torrent has a video
+        #
+
+        if args.mpv:
+
+            status = await pipeline.status(media_id)
+
+            if status and (status.get("hls_dir") or status.get("video_path")):
+                mpv_task = asyncio.create_task(
+                    play_in_mpv(pipeline, media_id, mpv_state)
+                )
+            else:
+                print("[MPV] no video in this torrent, skipping playback")
 
         #
         # monitor status
@@ -106,44 +240,39 @@ async def main():
 
         while True:
 
-            status = await (
-                pipeline.status(
-                    media_id
-                )
-            )
+            status = await pipeline.status(media_id)
 
-            print(
-                "\nSTATUS:\n"
-            )
-
+            print("\nSTATUS:\n")
             print(status)
 
             if not status:
                 break
 
-            if status[
-                "status"
-            ] in (
+            if status["status"] in TERMINAL:
 
-                "completed",
+                if status["status"] == "failed":
+                    print(f"\nPipeline failed: {status['error']}")
 
-                "failed",
-
-                "cancelled"
-            ):
                 break
 
             await asyncio.sleep(5)
 
     finally:
 
-        #
-        # stop pipeline if alive
-        #
+        if mpv_task:
+            mpv_task.cancel()
+            try:
+                await mpv_task
+            except asyncio.CancelledError:
+                pass
 
-        await pipeline.stop(
-            media_id
-        )
+        proc = mpv_state.get("proc")
+
+        if proc and proc.returncode is None:
+            proc.terminate()
+
+        if media_id:
+            await pipeline.stop(media_id)
 
         await torrent_session.stop()
 
@@ -151,6 +280,4 @@ async def main():
 if __name__ == "__main__":
 
     print("Entering Asyncio Event Loop")
-    asyncio.run(main())
-
-    
+    asyncio.run(main(parse_args()))
