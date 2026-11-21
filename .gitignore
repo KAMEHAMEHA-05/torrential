@@ -19,3 +19,6 @@ config.json.enc
 torrent/__pycache__/session.cpython-311.pyc
 torrent/__pycache__/stream.cpython-311.pyc
 log.txt
+*.db
+
+data/
